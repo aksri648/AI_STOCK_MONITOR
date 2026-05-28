@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently --names py,api,web --prefix-colors yellow,blue,green \".venv/bin/python3 yfinance_ws.py\" \"node server.js\" \"vite\"",
-    "dev:server": "concurrently --names py,api \".venv/bin/python3 yfinance_ws.py\" \"node server.js\"",
+    "start:frontend": "vite --host 0.0.0.0",
     "yfinance": ".venv/bin/python3 yfinance_ws.py",
     "build": "vite build",
     "preview": "vite preview",
