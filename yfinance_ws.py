@@ -241,7 +241,13 @@ class MarketTracker:
         log.info(f"Tracking {len(INDEX_TICKERS)} indices + {len(STOCK_TICKERS)} stocks")
 
         async def reject_probes(path, request_headers):
-            upgrade = request_headers.get("Upgrade", "")
+            try:
+                upgrade = request_headers.get("Upgrade", "")
+            except AttributeError:
+                try:
+                    upgrade = request_headers.headers.get("Upgrade", "")
+                except AttributeError:
+                    return None
             if upgrade.lower() != "websocket":
                 return (400, {}, b"Bad Request")
             return None
