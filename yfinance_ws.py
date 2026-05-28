@@ -228,6 +228,8 @@ class MarketTracker:
         try:
             async for _ in ws:
                 pass
+        except Exception:
+            pass
         finally:
             self.connected_clients.discard(ws)
             log.info(f"Client disconnected ({len(self.connected_clients)} total)")
@@ -238,7 +240,9 @@ class MarketTracker:
         log.info(f"Starting yfinance market service on ws://localhost:{WS_SERVER_PORT}")
         log.info(f"Tracking {len(INDEX_TICKERS)} indices + {len(STOCK_TICKERS)} stocks")
 
-        server = await websockets.serve(self._handle_client, "localhost", WS_SERVER_PORT)
+        server = await websockets.serve(
+            self._handle_client, "localhost", WS_SERVER_PORT,
+        )
         log.info("WebSocket server ready")
 
         tasks = [

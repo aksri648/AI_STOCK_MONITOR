@@ -9,6 +9,12 @@ import Groq from "groq-sdk"
 const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null
 
 const app = express()
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*")
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept")
+  if (req.method === "OPTIONS") return res.sendStatus(200)
+  next()
+})
 const server = createServer(app)
 const wss = new WebSocketServer({ server })
 
