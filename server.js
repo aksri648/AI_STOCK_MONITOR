@@ -186,6 +186,206 @@ app.get("/api/mfnav", (req, res) => {
   }
 })
 
+// ---- yfinance fallback for insights when stock-nse-india is blocked ----
+function calcSMA(values, period) {
+  const result = []
+  for (let i = period - 1; i < values.length; i++) {
+    let sum = 0
+    for (let j = 0; j < period; j++) sum += values[i - j]
+    result.push(sum / period)
+  }
+  return result
+}
+
+function calcEMA(values, period) {
+  const result = []
+  const k = 2 / (period + 1)
+  let ema = values.slice(0, period).reduce((a, b) => a + b, 0) / period
+  result.push(ema)
+  for (let i = period; i < values.length; i++) {
+    ema = (values[i] - ema) * k + ema
+    result.push(ema)
+  }
+  return result
+}
+
+function calcRSI(closes, period = 14) {
+  if (closes.length < period + 1) return null
+  const gains = [], losses = []
+  for (let i = 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1]
+    gains.push(d > 0 ? d : 0)
+    losses.push(d < 0 ? -d : 0)
+  }
+  let avgGain = gains.slice(0, period).reduce((a, b) => a + b, 0) / period
+  let avgLoss = losses.slice(0, period).reduce((a, b) => a + b, 0) / period
+  for (let i = period; i < gains.length; i++) {
+    avgGain = (avgGain * (period - 1) + gains[i]) / period
+    avgLoss = (avgLoss * (period - 1) + losses[i]) / period
+  }
+  if (avgLoss === 0) return 100
+  const rs = avgGain / avgLoss
+  return 100 - 100 / (1 + rs)
+}
+
+function calcMACD(closes) {
+  if (closes.length < 26) return { macdLine: 0, signal: 0, histogram: 0 }
+  const ema12 = calcEMA(closes, 12)
+  const ema26 = calcEMA(closes, 26)
+  const offset = ema12.length - ema26.length
+  const macdLine = ema12[ema12.length - 1] - ema26[ema26.length - 1]
+  const macdValues = []
+  for (let i = 0; i < ema26.length; i++) {
+    macdValues.push(ema12[i + offset] - ema26[i])
+  }
+  const signalLine = calcEMA(macdValues, 9)
+  const signal = signalLine[signalLine.length - 1]
+  return { macdLine, signal, histogram: macdLine - signal }
+}
+
+function calcBollinger(closes, period = 20, stdDev = 2) {
+  if (closes.length < period) return { upper: null, lower: null, middle: null }
+  const smaValues = calcSMA(closes, period)
+  const middle = smaValues[smaValues.length - 1]
+  if (middle == null) return { upper: null, lower: null, middle: null }
+  const slice = closes.slice(closes.length - period)
+  const variance = slice.reduce((sum, v) => sum + (v - middle) ** 2, 0) / period
+  const std = Math.sqrt(variance)
+  return { upper: middle + stdDev * std, lower: middle - stdDev * std, middle }
+}
+
+function calcATR(highs, lows, closes, period = 14) {
+  if (highs.length < period + 1) return 0
+  const trs = []
+  for (let i = 1; i < highs.length; i++) {
+    const hl = highs[i] - lows[i]
+    const hc = Math.abs(highs[i] - closes[i - 1])
+    const lc = Math.abs(lows[i] - closes[i - 1])
+    trs.push(Math.max(hl, hc, lc))
+  }
+  return trs.slice(-period).reduce((a, b) => a + b, 0) / period
+}
+
+function calcOBV(closes, volumes) {
+  let obv = 0
+  for (let i = 1; i < closes.length; i++) {
+    if (closes[i] > closes[i - 1]) obv += volumes[i]
+    else if (closes[i] < closes[i - 1]) obv -= volumes[i]
+  }
+  return obv
+}
+
+function calcADX(highs, lows, closes, period = 14) {
+  if (highs.length < period * 2) return 0
+  const plusDM = [], minusDM = [], trs = []
+  for (let i = 1; i < highs.length; i++) {
+    const upMove = highs[i] - highs[i - 1]
+    const downMove = lows[i - 1] - lows[i]
+    plusDM.push(upMove > downMove && upMove > 0 ? upMove : 0)
+    minusDM.push(downMove > upMove && downMove > 0 ? downMove : 0)
+    const hl = highs[i] - lows[i]
+    const hc = Math.abs(highs[i] - closes[i - 1])
+    const lc = Math.abs(lows[i] - closes[i - 1])
+    trs.push(Math.max(hl, hc, lc))
+  }
+  const atr = trs.slice(-period).reduce((a, b) => a + b, 0) / period
+  const avgPlus = plusDM.slice(-period).reduce((a, b) => a + b, 0) / period
+  const avgMinus = minusDM.slice(-period).reduce((a, b) => a + b, 0) / period
+  const pdi = (avgPlus / atr) * 100
+  const ndi = (avgMinus / atr) * 100
+  const dx = Math.abs(pdi - ndi) / (pdi + ndi) * 100
+  return dx || 0
+}
+
+function calcMFI(highs, lows, closes, volumes, period = 14) {
+  if (closes.length < period + 1) return null
+  const typicalPrices = []
+  for (let i = 0; i < closes.length; i++) typicalPrices.push((highs[i] + lows[i] + closes[i]) / 3)
+  const moneyFlows = typicalPrices.map((tp, i) => tp * volumes[i])
+  const posMF = [], negMF = []
+  for (let i = 1; i < typicalPrices.length; i++) {
+    if (typicalPrices[i] > typicalPrices[i - 1]) { posMF.push(moneyFlows[i]); negMF.push(0) }
+    else { negMF.push(moneyFlows[i]); posMF.push(0) }
+  }
+  const posSum = posMF.slice(-period).reduce((a, b) => a + b, 0)
+  const negSum = negMF.slice(-period).reduce((a, b) => a + b, 0)
+  if (negSum === 0) return 100
+  const mfr = posSum / negSum
+  return 100 - 100 / (1 + mfr)
+}
+
+async function fetchYahooInsights(symbol) {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}.NS?range=6mo&interval=1d`
+    const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } })
+    if (!r.ok) return null
+    const json = await r.json()
+    const result = json?.chart?.result?.[0]
+    if (!result) return null
+    const timestamps = result.timestamp || []
+    const quote = result.indicators?.quote?.[0] || {}
+    const adjclose = result.indicators?.adjclose?.[0]?.adjclose || []
+    const opens = quote.open || []
+    const highs = quote.high || []
+    const lows = quote.low || []
+    const closes = quote.close || []
+    const volumes = quote.volume || []
+
+    const valid = []
+    for (let i = 0; i < timestamps.length; i++) {
+      if (closes[i] != null && opens[i] != null && highs[i] != null && lows[i] != null && volumes[i] != null) {
+        valid.push({
+          date: new Date(timestamps[i] * 1000).toISOString().split("T")[0],
+          open: opens[i], high: highs[i], low: lows[i], close: closes[i],
+          volume: volumes[i],
+        })
+      }
+    }
+    if (valid.length < 30) return null
+
+    const c = valid.map(d => d.close)
+    const h = valid.map(d => d.high)
+    const l = valid.map(d => d.low)
+    const v = valid.map(d => d.volume)
+
+    const price = c[c.length - 1]
+    const prevClose = c.length > 1 ? c[c.length - 2] : price
+    const change = price - prevClose
+    const pct = prevClose > 0 ? (change / prevClose) * 100 : 0
+
+    const rsi = calcRSI(c)
+    const macd = calcMACD(c)
+    const sma5 = calcSMA(c, 5)
+    const sma20 = calcSMA(c, 20)
+    const sma50 = calcSMA(c, 50)
+    const sma200 = calcSMA(c, 200)
+    const bb = calcBollinger(c)
+    const atr = calcATR(h, l, c)
+    const obv = calcOBV(c, v)
+    const obvPrev = calcOBV(c.slice(0, -1), v.slice(0, -1))
+    const adx = calcADX(h, l, c)
+    const mfi = calcMFI(h, l, c, v)
+
+    return {
+      price, prevClose, change, pct,
+      rsi,
+      macdLine: macd.macdLine, macdSignal: macd.signal, macdHist: macd.histogram,
+      sma5: sma5.length > 0 ? sma5[sma5.length - 1] : null,
+      sma20: sma20.length > 0 ? sma20[sma20.length - 1] : null,
+      sma50: sma50.length > 0 ? sma50[sma50.length - 1] : null,
+      sma200: sma200.length > 0 ? sma200[sma200.length - 1] : null,
+      adx, mfi,
+      bbUpper: bb.upper, bbLower: bb.lower,
+      obv, obvPrev, atr,
+      volume: v[v.length - 1] || 0,
+      chartData: valid.slice(-60),
+    }
+  } catch (e) {
+    console.error("Yahoo insights error:", e.message)
+    return null
+  }
+}
+
 app.get("/api/insights", async (req, res) => {
   const symbol = (req.query.symbol || "").toUpperCase().trim()
   if (!symbol) return res.json({ error: "Missing symbol" })
@@ -196,69 +396,85 @@ app.get("/api/insights", async (req, res) => {
       nse.getEquityDetails(symbol).catch(() => null),
       nse.getEquityHistoricalData(symbol).catch(() => null),
     ])
+
+    let currentPrice, prevClose, change, pct
+    let rsi, macdLine, macdSignal, macdHist
+    let sma5, sma20, sma50, sma200
+    let adx, mfi, bbUpper, bbLower, obv, obvPrev, atr
+    let tradeVol, tradeVal, deliveryQty, deliveryPct
+    let chartData, depthData
+
     if (!indicators && !tradeInfo && !equity) {
-      return res.json({ error: "No data available for " + symbol })
-    }
+      // Fallback to yfinance when stock-nse-india fails (e.g. on Render)
+      const yf = await fetchYahooInsights(symbol)
+      if (!yf) return res.json({ error: "No data available for " + symbol })
+      currentPrice = yf.price; prevClose = yf.prevClose; change = yf.change; pct = yf.pct
+      rsi = yf.rsi; macdLine = yf.macdLine; macdSignal = yf.macdSignal; macdHist = yf.macdHist
+      sma5 = yf.sma5; sma20 = yf.sma20; sma50 = yf.sma50; sma200 = yf.sma200
+      adx = yf.adx; mfi = yf.mfi; bbUpper = yf.bbUpper; bbLower = yf.bbLower
+      obv = yf.obv; obvPrev = yf.obvPrev; atr = yf.atr
+      tradeVol = yf.volume; tradeVal = 0; deliveryQty = 0; deliveryPct = 0
+      chartData = yf.chartData
+      depthData = { maxBidQty: 1, maxAskQty: 1, bids: [], asks: [] }
+    } else {
+      const pi = equity?.priceInfo || {}
+      currentPrice = parseFloat(pi.lastPrice) || 0
+      prevClose = parseFloat(pi.previousClose) || currentPrice
+      change = parseFloat(pi.change) || 0
+      pct = parseFloat(pi.pChange) || 0
 
-    const pi = equity?.priceInfo || {}
-    const currentPrice = parseFloat(pi.lastPrice) || 0
-    const prevClose = parseFloat(pi.previousClose) || currentPrice
-    const change = parseFloat(pi.change) || 0
-    const pct = parseFloat(pi.pChange) || 0
+      const rsiArr = indicators?.rsi || []
+      rsi = rsiArr.length > 0 ? rsiArr[rsiArr.length - 1] : null
+      const macdObj = indicators?.macd || {}
+      macdLine = macdObj.macd?.length > 0 ? macdObj.macd[macdObj.macd.length - 1] : 0
+      macdSignal = macdObj.signal?.length > 0 ? macdObj.signal[macdObj.signal.length - 1] : 0
+      macdHist = macdObj.histogram?.length > 0 ? macdObj.histogram[macdObj.histogram.length - 1] : 0
 
-    const rsiArr = indicators?.rsi || []
-    const rsi = rsiArr.length > 0 ? rsiArr[rsiArr.length - 1] : null
-    const macd = indicators?.macd || {}
-    const macdLine = macd.macd?.length > 0 ? macd.macd[macd.macd.length - 1] : 0
-    const macdSignal = macd.signal?.length > 0 ? macd.signal[macd.signal.length - 1] : 0
-    const macdHist = macd.histogram?.length > 0 ? macd.histogram[macd.histogram.length - 1] : 0
+      const smaObj = indicators?.sma || {}
+      sma5 = smaObj.sma5?.length > 0 ? smaObj.sma5[smaObj.sma5.length - 1] : null
+      sma20 = smaObj.sma20?.length > 0 ? smaObj.sma20[smaObj.sma20.length - 1] : null
+      sma50 = smaObj.sma50?.length > 0 ? smaObj.sma50[smaObj.sma50.length - 1] : null
+      sma200 = smaObj.sma200?.length > 0 ? smaObj.sma200[smaObj.sma200.length - 1] : null
 
-    const sma = indicators?.sma || {}
-    const sma5 = sma.sma5?.length > 0 ? sma.sma5[sma.sma5.length - 1] : null
-    const sma20 = sma.sma20?.length > 0 ? sma.sma20[sma.sma20.length - 1] : null
-    const sma50 = sma.sma50?.length > 0 ? sma.sma50[sma.sma50.length - 1] : null
-    const sma200 = sma.sma200?.length > 0 ? sma.sma200[sma.sma200.length - 1] : null
+      const adxArr = indicators?.adx || []
+      adx = adxArr.length > 0 ? adxArr[adxArr.length - 1] : 0
+      const mfiArr = indicators?.mfi || []
+      mfi = mfiArr.length > 0 ? mfiArr[mfiArr.length - 1] : null
 
-    const adxArr = indicators?.adx || []
-    const adx = adxArr.length > 0 ? adxArr[adxArr.length - 1] : 0
-    const mfiArr = indicators?.mfi || []
-    const mfi = mfiArr.length > 0 ? mfiArr[mfiArr.length - 1] : null
+      const bb = indicators?.bollingerBands || {}
+      bbUpper = bb.upper?.length > 0 ? bb.upper[bb.upper.length - 1] : null
+      bbLower = bb.lower?.length > 0 ? bb.lower[bb.lower.length - 1] : null
 
-    const bb = indicators?.bollingerBands || {}
-    const bbUpper = bb.upper?.length > 0 ? bb.upper[bb.upper.length - 1] : null
-    const bbLower = bb.lower?.length > 0 ? bb.lower[bb.lower.length - 1] : null
+      const obvArr = indicators?.obv || []
+      obv = obvArr.length > 0 ? obvArr[obvArr.length - 1] : 0
+      obvPrev = obvArr.length > 1 ? obvArr[obvArr.length - 2] : obv
+      const atrArr = indicators?.atr || []
+      atr = atrArr.length > 0 ? atrArr[atrArr.length - 1] : 0
 
-    const obvArr = indicators?.obv || []
-    const obv = obvArr.length > 0 ? obvArr[obvArr.length - 1] : 0
-    const obvPrev = obvArr.length > 1 ? obvArr[obvArr.length - 2] : obv
-    const atrArr = indicators?.atr || []
-    const atr = atrArr.length > 0 ? atrArr[atrArr.length - 1] : 0
+      tradeVol = tradeInfo?.marketDeptOrderBook?.tradeInfo?.totalTradedVolume || 0
+      tradeVal = tradeInfo?.marketDeptOrderBook?.tradeInfo?.totalTradedValue || 0
+      deliveryQty = tradeInfo?.securityWiseDP?.deliveryQuantity || 0
+      deliveryPct = tradeInfo?.securityWiseDP?.deliveryToTradedQuantity || 0
 
-    const tradeVol = tradeInfo?.marketDeptOrderBook?.tradeInfo?.totalTradedVolume || 0
-    const tradeVal = tradeInfo?.marketDeptOrderBook?.tradeInfo?.totalTradedValue || 0
-    const deliveryQty = tradeInfo?.securityWiseDP?.deliveryQuantity || 0
-    const deliveryPct = tradeInfo?.securityWiseDP?.deliveryToTradedQuantity || 0
+      const histData = historical?.flatMap(x => x.data) || []
+      chartData = histData.slice(-60).map(d => ({
+        date: d.mtimestamp,
+        open: parseFloat(d.chOpeningPrice) || 0,
+        high: parseFloat(d.chTradeHighPrice) || 0,
+        low: parseFloat(d.chTradeLowPrice) || 0,
+        close: parseFloat(d.chClosingPrice) || 0,
+        volume: parseInt(d.chTotTradedQty) || 0,
+        vwap: parseFloat(d.vwap || 0) || 0,
+      }))
 
-    // Build historical chart data (last 60 trading days)
-    const histData = historical?.flatMap(x => x.data) || []
-    const chartData = histData.slice(-60).map(d => ({
-      date: d.mtimestamp,
-      open: parseFloat(d.chOpeningPrice) || 0,
-      high: parseFloat(d.chTradeHighPrice) || 0,
-      low: parseFloat(d.chTradeLowPrice) || 0,
-      close: parseFloat(d.chClosingPrice) || 0,
-      volume: parseInt(d.chTotTradedQty) || 0,
-      vwap: parseFloat(d.vwap || 0) || 0,
-    }))
-
-    // Order book depth
-    const bid = tradeInfo?.marketDeptOrderBook?.bid || []
-    const ask = tradeInfo?.marketDeptOrderBook?.ask || []
-    const depthData = {
-      maxBidQty: Math.max(...bid.map(b => b.quantity || 0), 1),
-      maxAskQty: Math.max(...ask.map(a => a.quantity || 0), 1),
-      bids: bid.slice(0, 5),
-      asks: ask.slice(0, 5),
+      const bid = tradeInfo?.marketDeptOrderBook?.bid || []
+      const ask = tradeInfo?.marketDeptOrderBook?.ask || []
+      depthData = {
+        maxBidQty: Math.max(...bid.map(b => b.quantity || 0), 1),
+        maxAskQty: Math.max(...ask.map(a => a.quantity || 0), 1),
+        bids: bid.slice(0, 5),
+        asks: ask.slice(0, 5),
+      }
     }
 
     const dataPayload = {
