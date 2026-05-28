@@ -6,7 +6,7 @@ import { WebSocketServer, WebSocket as WsClient } from "ws"
 import { NseIndia } from "stock-nse-india"
 import Groq from "groq-sdk"
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
+const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null
 
 const app = express()
 const server = createServer(app)
@@ -270,7 +270,7 @@ app.get("/api/insights", async (req, res) => {
 
     // Try AI analysis via Groq; fallback to rule-based
     try {
-      if (!process.env.GROQ_API_KEY) throw new Error("No API key")
+      if (!groq) throw new Error("No API key")
       const rules = `TECHNICAL ANALYSIS RULES:
 
 1. RSI (Relative Strength Index):
