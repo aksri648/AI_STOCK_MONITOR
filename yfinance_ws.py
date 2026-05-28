@@ -22,7 +22,7 @@ logging.basicConfig(
 log = logging.getLogger("yf-ws")
 # Render probes internal ports with HEAD requests; websockets rejects them at
 # the HTTP parse stage before process_request runs. Silence the noise.
-logging.getLogger("websockets.server").setLevel(logging.WARNING)
+logging.getLogger("websockets").setLevel(logging.CRITICAL)
 
 # ── NSE indices → Yahoo Finance tickers ──────────────────────────
 NSE_INDEX_MAP = {
