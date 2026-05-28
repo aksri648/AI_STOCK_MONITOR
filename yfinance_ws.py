@@ -20,6 +20,9 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("yf-ws")
+# Render probes internal ports with HEAD requests; websockets rejects them at
+# the HTTP parse stage before process_request runs. Silence the noise.
+logging.getLogger("websockets.server").setLevel(logging.WARNING)
 
 # ── NSE indices → Yahoo Finance tickers ──────────────────────────
 NSE_INDEX_MAP = {
@@ -240,21 +243,8 @@ class MarketTracker:
         log.info(f"Starting yfinance market service on ws://localhost:{WS_SERVER_PORT}")
         log.info(f"Tracking {len(INDEX_TICKERS)} indices + {len(STOCK_TICKERS)} stocks")
 
-        async def reject_probes(path, request_headers):
-            try:
-                upgrade = request_headers.get("Upgrade", "")
-            except AttributeError:
-                try:
-                    upgrade = request_headers.headers.get("Upgrade", "")
-                except AttributeError:
-                    return None
-            if upgrade.lower() != "websocket":
-                return (400, {}, b"Bad Request")
-            return None
-
         server = await websockets.serve(
             self._handle_client, "localhost", WS_SERVER_PORT,
-            process_request=reject_probes,
         )
         log.info("WebSocket server ready")
 
