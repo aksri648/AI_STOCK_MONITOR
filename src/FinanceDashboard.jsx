@@ -245,7 +245,7 @@ export default function FinanceDashboard() {
           ]).map(idx => (
             <span key={idx.name} style={{ fontSize: 11 }}>
               <span style={{ color: C.textSec }}>{idx.name}&nbsp;</span>
-              {idx.val != null
+              {idx.pct != null
                 ? <span style={{ color: idx.pct >= 0 ? C.green : C.red }}>{idx.pct >= 0 ? "+" : ""}{idx.pct.toFixed(2)}%</span>
                 : <span style={{ color: C.textDim }}>—</span>
               }
