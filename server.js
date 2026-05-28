@@ -1,6 +1,7 @@
 import "dotenv/config"
 import express from "express"
 import { createServer } from "http"
+import { spawn } from "child_process"
 import { WebSocketServer, WebSocket as WsClient } from "ws"
 import { NseIndia } from "stock-nse-india"
 import Groq from "groq-sdk"
@@ -12,6 +13,23 @@ const server = createServer(app)
 const wss = new WebSocketServer({ server })
 
 const nse = new NseIndia()
+
+// Start Python yfinance WebSocket service as a child process
+let pyProc
+function startPythonService() {
+  pyProc = spawn("python3", ["yfinance_ws.py"], {
+    stdio: ["ignore", "inherit", "inherit"],
+    cwd: process.cwd(),
+  })
+  pyProc.on("exit", (code) => {
+    console.log(`yfinance WS service exited (code ${code}), restarting in 5s...`)
+    setTimeout(startPythonService, 5000)
+  })
+  pyProc.on("error", () => {
+    console.log("yfinance WS service not available, running without real-time stream")
+  })
+}
+startPythonService()
 
 const YF_WS_URL = "ws://localhost:3002"
 let yfWs = null
@@ -92,6 +110,9 @@ const heartbeat = setInterval(() => {
 }, 30000)
 
 wss.on("close", () => clearInterval(heartbeat))
+
+process.on("SIGTERM", () => { pyProc?.kill(); process.exit(0) })
+process.on("SIGINT", () => { pyProc?.kill(); process.exit(0) })
 
 app.get("/api/indices", (req, res) => {
   if (!cachedIndices) return res.status(503).json({ error: "Loading" })

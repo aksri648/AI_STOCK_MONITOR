@@ -2,6 +2,8 @@ import { useState, useRef, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 
+const API_BASE = import.meta.env.VITE_API_URL || ''
+
 const C = {
   bg: '#020c18', panel: '#050f1e', border: '#0c1d34',
   green: '#00e676', red: '#ff3c5c', amber: '#f5a623', blue: '#2196f3',
@@ -48,7 +50,7 @@ export default function MFNav() {
     setLoading(true)
     setError('')
     try {
-      const r = await fetch(`/api/mfnav?q=${encodeURIComponent(q)}&limit=30`)
+      const r = await fetch(`${API_BASE}/api/mfnav?q=${encodeURIComponent(q)}&limit=30`)
       const d = await r.json()
       if (d.error) throw new Error(d.error)
       setResults(d.funds || [])

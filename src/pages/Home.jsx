@@ -11,8 +11,10 @@ const MONO = "'Consolas','Menlo','Monaco','Courier New',monospace"
 // Emoji font stack — flag emojis don't render in monospace on Windows
 const EMOJI = "'Segoe UI Emoji','Apple Color Emoji','Noto Color Emoji',sans-serif"
 
-const TICKER_LABELS = { SPY: 'S&P 500', QQQ: 'NASDAQ 100', GLD: 'GOLD', '^NSEI': 'NIFTY 50', '^NSEBANK': 'BANK NIFTY' }
-const TICKER_ORDER = ['SPY', 'QQQ', 'GLD', '^NSEI', '^NSEBANK']
+const API_BASE = import.meta.env.VITE_API_URL || ''
+
+const TICKER_LABELS = { '^NSEI': 'NIFTY 50', '^NSEBANK': 'BANK NIFTY' }
+const TICKER_ORDER = ['^NSEI', '^NSEBANK']
 
 function TickerStrip() {
   const [tickers, setTickers] = useState(TICKER_ORDER.map(sym => ({ sym, pct: null })))
@@ -20,18 +22,9 @@ function TickerStrip() {
 
   const fetchTickers = async () => {
     try {
-      const [etfs, indices] = await Promise.all([
-        fetch('/api/stocks?symbols=SPY,QQQ,GLD').then(r => r.json()).catch(() => []),
-        fetch('/api/indices').then(r => r.json()).catch(() => []),
-      ])
+      const indices = await fetch(`${API_BASE}/api/indices`).then(r => r.json()).catch(() => [])
 
       const map = {}
-
-      if (Array.isArray(etfs)) {
-        for (const s of etfs) {
-          if (s?.symbol && s?.pct != null) map[s.symbol] = +s.pct.toFixed(2)
-        }
-      }
 
       if (Array.isArray(indices)) {
         for (const idx of indices) {

@@ -2,6 +2,9 @@ import { useState, useEffect, useRef } from "react"
 import { Link } from "react-router-dom"
 import AIAnalyticsDashboard from "./AIAnalyticsDashboard"
 
+const API_BASE = import.meta.env.VITE_API_URL || ''
+const WS_URL   = API_BASE ? API_BASE.replace(/^http/, 'ws') : null
+
 const C = {
   bg: "#020c18", panel: "#050f1e", panelSel: "#0a1a30",
   border: "#0c1d34", borderBright: "#162840",
@@ -120,7 +123,7 @@ export default function FinanceDashboard() {
     const t = setTimeout(async () => {
       setSearchLoading(true)
       try {
-        const r = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`)
+        const r = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(searchQuery)}`)
         const data = await r.json()
         setSearchResults(data.results || [])
         setSearchOpen(true)
@@ -150,10 +153,10 @@ export default function FinanceDashboard() {
   }
 
   useEffect(() => {
-    fetch("/api/indices").then(r => r.json()).then(d => {
+    fetch(`${API_BASE}/api/indices`).then(r => r.json()).then(d => {
       if (d && !d.error) setIndices(d)
     }).catch(() => {})
-    fetch("/api/indian").then(r => r.json()).then(d => {
+    fetch(`${API_BASE}/api/indian`).then(r => r.json()).then(d => {
       if (d && !d.error) marketFromHTTP({ stocks: d })
     }).catch(() => {})
   }, [])
@@ -163,8 +166,8 @@ export default function FinanceDashboard() {
     let reconnectTimer = null
 
     function connect() {
-      const proto = window.location.protocol === "https:" ? "wss:" : "ws:"
-      ws = new WebSocket(`${proto}//${window.location.hostname}:3001`)
+      const url = WS_URL || `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.hostname}:3001`
+      ws = new WebSocket(url)
 
       ws.onopen = () => { setWsStatus("connected"); if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null } }
       ws.onclose = () => { setWsStatus("connecting"); scheduleReconnect() }
@@ -194,7 +197,7 @@ export default function FinanceDashboard() {
     setNews([])
     const symbol = selected.symbol || selected.id || ""
     const name   = encodeURIComponent(selected.name || selected.symbol || "")
-    fetch(`/api/news?symbol=${symbol}&type=indian&name=${name}`)
+    fetch(`${API_BASE}/api/news?symbol=${symbol}&type=indian&name=${name}`)
       .then(r => r.json())
       .then(d => setNews(d.articles || []))
       .catch(() => setNews([]))
@@ -202,7 +205,7 @@ export default function FinanceDashboard() {
     if (selected.type === "indian") {
       setInsightsLoading(true)
       setInsights(null)
-      fetch(`/api/insights?symbol=${symbol}`)
+      fetch(`${API_BASE}/api/insights?symbol=${symbol}`)
         .then(r => r.json())
         .then(d => { if (!d.error) setInsights(d) })
         .catch(() => {})
